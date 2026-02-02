@@ -6,13 +6,16 @@
 #include <cstdlib>
 
 // Inclui headers essenciais do ooz
-#include "stdafx.h" // Importante para definições de tipos
+#include "stdafx.h"
 #include "kraken.h"
 
-// Fallback de compatibilidade se necessário
+// Fallback de compatibilidade
 typedef unsigned char uint8;
 
-// Função auxiliar para ler arquivo completo
+// Declaração manual da função do ooz (Kraken) para garantir visibilidade
+// A assinatura padrão do ooz para Kraken_Decompress
+int Kraken_Decompress(const uint8 *src, size_t src_len, uint8 *dst, size_t dst_len);
+
 std::vector<uint8> readFile(const char* filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file) return {};
@@ -24,7 +27,6 @@ std::vector<uint8> readFile(const char* filename) {
     return buffer;
 }
 
-// Função auxiliar para escrever arquivo
 bool writeFile(const char* filename, const std::vector<uint8>& data) {
     std::ofstream file(filename, std::ios::binary);
     if (!file) return false;
@@ -33,7 +35,6 @@ bool writeFile(const char* filename, const std::vector<uint8>& data) {
 }
 
 int main(int argc, char* argv[]) {
-    // Uso: ./ooz_cli <mode> <input_file> <output_file> [size_if_decompress]
     if (argc < 4) {
         std::cerr << "Usage: " << argv[0] << " <mode> <input> <output> [size]" << std::endl;
         return 1;
@@ -59,8 +60,7 @@ int main(int argc, char* argv[]) {
         size_t decodedSize = std::stoull(argv[4]);
         outputData.resize(decodedSize);
 
-        // Tenta descomprimir usando a API padrão do Ooz
-        // A função Kraken_Decompress deve estar disponível se o compilador tiver as flags AVX/SSE ativadas
+        // Chama a função Kraken_Decompress diretamente
         int result = Kraken_Decompress(inputData.data(), inputData.size(), outputData.data(), decodedSize);
         
         if (result <= 0) {
