@@ -5,16 +5,24 @@
 #include <cstring>
 #include <cstdlib>
 
-// Inclui headers essenciais do ooz
+// Define types required by ooz headers if they are missing
+typedef unsigned char uint8;
+typedef unsigned char byte;
+
+// Fix for __forceinline on Linux/GCC if stdafx.h doesn't handle it correctly
+#ifndef __forceinline
+#define __forceinline inline __attribute__((always_inline))
+#endif
+
+// Include headers
 #include "stdafx.h"
 #include "kraken.h"
 
-// Fallback de compatibilidade
-typedef unsigned char uint8;
-
-// Declaração manual da função do ooz (Kraken) para garantir visibilidade
-// A assinatura padrão do ooz para Kraken_Decompress
-int Kraken_Decompress(const uint8 *src, size_t src_len, uint8 *dst, size_t dst_len);
+// Explicit declaration of Kraken_Decompress to fix "not declared" error.
+// The signature in ooz is usually:
+// int Kraken_Decompress(const byte *src, size_t src_len, byte *dst, size_t dst_len);
+// We use 'byte' which is typedef'd to unsigned char.
+int Kraken_Decompress(const byte *src, size_t src_len, byte *dst, size_t dst_len);
 
 std::vector<uint8> readFile(const char* filename) {
     std::ifstream file(filename, std::ios::binary);
@@ -35,6 +43,7 @@ bool writeFile(const char* filename, const std::vector<uint8>& data) {
 }
 
 int main(int argc, char* argv[]) {
+    // Usage: ./ooz_cli <mode> <input_file> <output_file> [size_if_decompress]
     if (argc < 4) {
         std::cerr << "Usage: " << argv[0] << " <mode> <input> <output> [size]" << std::endl;
         return 1;
@@ -60,8 +69,9 @@ int main(int argc, char* argv[]) {
         size_t decodedSize = std::stoull(argv[4]);
         outputData.resize(decodedSize);
 
-        // Chama a função Kraken_Decompress diretamente
-        int result = Kraken_Decompress(inputData.data(), inputData.size(), outputData.data(), decodedSize);
+        // Call Kraken_Decompress using the signature we declared above.
+        // We cast pointers to (byte*) to match the declaration.
+        int result = Kraken_Decompress((const byte*)inputData.data(), inputData.size(), (byte*)outputData.data(), decodedSize);
         
         if (result <= 0) {
             std::cerr << "Error: Decompression failed with code " << result << std::endl;
