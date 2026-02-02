@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoW Tools Web</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { background-color: #1a1a1a; color: #e5e5e5; }
+        .accent-color { color: #7B1E1E; }
+        .btn-primary { background-color: #7B1E1E; color: white; }
+        .btn-primary:hover { background-color: #581212; }
+        .btn-primary:disabled { background-color: #444; cursor: not-allowed; }
+    </style>
+</head>
+<body class="flex h-screen font-sans">
+
+    <!-- Sidebar -->
+    <div class="w-64 bg-[#212121] flex flex-col border-r border-gray-800">
+        <div class="h-16 flex items-center justify-center border-b border-gray-800">
+            <h1 class="font-bold text-xl tracking-widest accent-color">GOW<span class="text-white">WEB</span></h1>
+        </div>
+        <div class="p-4">
+            <button class="w-full flex items-center gap-3 px-4 py-3 bg-[#2b2b2b] text-white border-l-4 border-[#7B1E1E]">
+                <i data-lucide="package" class="w-5 h-5"></i> WAD Manager
+            </button>
+        </div>
+    </div>
+
+    <!-- Conteúdo -->
+    <div class="flex-1 flex flex-col">
+        <div class="h-16 bg-[#1a1a1a] border-b border-[#2b2b2b] flex items-center px-8">
+            <h2 class="text-xl font-light">Extração de Arquivos WAD</h2>
+        </div>
+
+        <div class="p-8 flex-1 overflow-y-auto">
+            <div class="max-w-2xl mx-auto space-y-6">
+                
+                <!-- Área de Upload -->
+                <div class="bg-[#212121] p-8 rounded-lg border-2 border-dashed border-gray-600 text-center relative group hover:border-[#7B1E1E] transition-colors">
+                    <input type="file" id="fileInput" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".wad" onchange="handleFile(this)">
+                    <div id="drop-content">
+                        <i data-lucide="upload-cloud" class="w-12 h-12 mx-auto text-gray-400 mb-4 group-hover:text-[#7B1E1E]"></i>
+                        <p class="text-lg font-medium">Arraste seu arquivo .WAD aqui</p>
+                        <p class="text-sm text-gray-500">ou clique para selecionar</p>
+                    </div>
+                </div>
+
+                <!-- Painel de Ação -->
+                <div id="action-panel" class="hidden bg-[#212121] p-6 rounded-lg border border-[#2b2b2b]">
+                    <div class="flex items-center justify-between mb-4">
+                        <span id="filename-display" class="font-mono text-yellow-500">arquivo.wad</span>
+                        <span id="filesize-display" class="text-xs text-gray-500">0 MB</span>
+                    </div>
+                    <button onclick="uploadAndExtract()" id="btn-extract" class="w-full py-3 rounded font-bold uppercase tracking-widest btn-primary transition-all flex justify-center gap-2">
+                        <i data-lucide="cog" class="w-5 h-5"></i> Extrair Arquivo
+                    </button>
+                </div>
+
+                <!-- Log Terminal -->
+                <div class="bg-black rounded border border-gray-800 font-mono text-sm p-4 h-48 overflow-y-auto" id="terminal">
+                    <div class="text-blue-500">[SISTEMA] Interface pronta. Aguardando arquivo...</div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+        let currentFile = null;
+
+        function log(msg, color = 'text-gray-300') {
+            const term = document.getElementById('terminal');
+            const date = new Date().toLocaleTimeString();
+            term.innerHTML += `<div class="${color}"><span class="text-gray-600">[${date}]</span> ${msg}</div>`;
+            term.scrollTop = term.scrollHeight;
+        }
+
+        function handleFile(input) {
+            if (input.files && input.files[0]) {
+                currentFile = input.files[0];
+                document.getElementById('action-panel').classList.remove('hidden');
+                document.getElementById('filename-display').textContent = currentFile.name;
+                document.getElementById('filesize-display').textContent = (currentFile.size / 1024 / 1024).toFixed(2) + " MB";
+                log(`Arquivo selecionado: ${currentFile.name}`, 'text-green-400');
+            }
+        }
+
+        async function uploadAndExtract() {
+            if (!currentFile) return;
+
+            const btn = document.getElementById('btn-extract');
+            btn.disabled = true;
+            btn.innerHTML = `<span class="animate-spin">⌛</span> Processando...`;
+            log("Iniciando upload para o servidor...", "text-blue-400");
+
+            const formData = new FormData();
+            formData.append('file', currentFile);
+            formData.append('action', 'extract');
+
+            try {
+                const response = await fetch('backend.php', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) throw new Error("Erro no servidor: " + response.statusText);
+                
+                // Verifica se é JSON
+                const text = await response.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    throw new Error("Resposta inválida do servidor: " + text.substring(0, 50));
+                }
+
+                if (data.error) throw new Error(data.error);
+
+                log("Processamento concluído com sucesso!", "text-green-500");
+                log("Baixando arquivo ZIP...", "text-yellow-400");
+                
+                window.location.href = `backend.php?download=${data.download_url}`;
+
+            } catch (error) {
+                log(`ERRO: ${error.message}`, "text-red-500");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i data-lucide="cog" class="w-5 h-5"></i> Extrair Arquivo`;
+                lucide.createIcons();
+            }
+        }
+    </script>
+</body>
+</html>
