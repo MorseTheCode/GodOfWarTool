@@ -1,0 +1,7 @@
+uploads/
+exports/
+temp/
+ooz_cli
+*.o
+*.obj
+.DS_Store
