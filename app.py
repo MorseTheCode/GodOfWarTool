@@ -676,16 +676,6 @@ class TextEditorWindow(ctk.CTkToplevel):
         ctk.CTkButton(btn_frame_left, text="Save", command=self.save_memory, width=120,
                       fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER).pack(side="left", padx=5)
 
-        if self.platform == "PS5" and self.entry.name == "MSGS_TXT":
-            ctk.CTkButton(
-                btn_frame_left,
-                text="Balance Size",
-                command=self.balance_selected_text,
-                width=120,
-                fg_color=COLOR_BTN_NORMAL,
-                hover_color=COLOR_BTN_HOVER,
-            ).pack(side="left", padx=5)
-
         self.btn_repack = ctk.CTkButton(self.toolbar, text="Inject to File", command=self.save_sequence,
                       fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
         self.btn_repack.pack(side="right", padx=10, pady=10)
@@ -988,73 +978,6 @@ class TextEditorWindow(ctk.CTkToplevel):
         self.textbox.delete("1.0", "2.0")
         self.textbox.insert("1.0", new_header + "\n")
         return new_header
-
-    def _current_payload(self):
-        content = self.textbox.get("1.0", "end-1c")
-        if self.entry.name == "MSGS_TXT":
-            content = content.replace("\r\n", "\n").replace("\r", "\n")
-        payload = content.encode("utf-8")
-        if self.final_null:
-            payload += b"\0"
-        return payload
-
-    def balance_selected_text(self):
-        self.calculate_header()
-        payload_delta = len(self._current_payload()) - self.original_size
-        if payload_delta == 0:
-            self.lbl_status.configure(text="Size already matches", text_color="#2ECC71")
-            return
-
-        widget = self.textbox._textbox
-        try:
-            start = widget.index("sel.first")
-            end = widget.index("sel.last")
-            selected = widget.get(start, end)
-        except Exception:
-            CustomMessageBox(
-                "Select balancing text",
-                "Select text from one ordinary translation line that may be shortened or padded.",
-                is_error=True,
-            )
-            return
-
-        if not selected or "\n" in selected or "\r" in selected:
-            CustomMessageBox(
-                "Invalid selection",
-                "The balancing selection must stay inside one text line.",
-                is_error=True,
-            )
-            return
-
-        if payload_delta > 0:
-            removed_bytes = 0
-            cut = len(selected)
-            while cut > 0 and removed_bytes < payload_delta:
-                cut -= 1
-                removed_bytes += len(selected[cut].encode("utf-8"))
-            if removed_bytes != payload_delta:
-                CustomMessageBox(
-                    "Selection is too small",
-                    f"The selection must provide exactly {payload_delta} UTF-8 bytes.",
-                    is_error=True,
-                )
-                return
-            replacement = selected[:cut]
-        else:
-            replacement = selected + (" " * -payload_delta)
-
-        widget.delete(start, end)
-        widget.insert(start, replacement)
-        if len(self._current_payload()) != self.original_size:
-            CustomMessageBox(
-                "Balance failed",
-                "The edited MSGS_TXT still does not match its original byte size.",
-                is_error=True,
-            )
-            return
-        self.lbl_status.configure(
-            text=f"Balanced to {self.original_size:,} bytes", text_color="#2ECC71"
-        )
 
     def save_memory(self):
         if self.entry.name == "MSGS_TXT":
