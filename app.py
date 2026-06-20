@@ -155,6 +155,7 @@ class CustomFileDialog(ctk.CTkToplevel):
         self.filetypes = filetypes if filetypes else [("All Files", "*")]
         self.initial_file = initial_file
         self.result = None
+        self.selected_directory = None
         
         try:
             self.after(200, lambda: self.iconbitmap(resource_path("icon7.ico")))
@@ -221,12 +222,16 @@ class CustomFileDialog(ctk.CTkToplevel):
                   foreground=[('active', 'white')])
         
         self.tree = ttk.Treeview(tree_frame, columns=("size", "date"), selectmode="extended" if mode == "open_multiple" else "browse")
-        self.tree.heading("#0", text="Name", anchor="w")
+        self.tree.heading("#0", text="Folder" if mode == "directory" else "Name", anchor="w")
         self.tree.heading("size", text="Size", anchor="w")
         self.tree.heading("date", text="Date Modified", anchor="w")
         self.tree.column("#0", width=450)
         self.tree.column("size", width=100)
         self.tree.column("date", width=150)
+        if mode == "directory":
+            self.tree.configure(displaycolumns=("date",))
+            self.tree.column("#0", width=610)
+            self.tree.column("date", width=180)
         
         self.tree.pack(side="left", fill="both", expand=True)
         
@@ -240,10 +245,15 @@ class CustomFileDialog(ctk.CTkToplevel):
         bot_frame = ctk.CTkFrame(self, fg_color="transparent")
         bot_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
         
-        ctk.CTkLabel(bot_frame, text="File name:").pack(side="left")
+        field_label = "Folder:" if mode == "directory" else "File name:"
+        ctk.CTkLabel(bot_frame, text=field_label).pack(side="left")
         self.filename_entry = ctk.CTkEntry(bot_frame)
         self.filename_entry.pack(side="left", padx=10, fill="x", expand=True)
-        if initial_file: self.filename_entry.insert(0, initial_file)
+        if mode == "directory":
+            self.selected_directory = self.current_dir
+            self.filename_entry.insert(0, self.current_dir)
+        elif initial_file:
+            self.filename_entry.insert(0, initial_file)
         
         if mode != "directory":
             self.type_map = {name: pat for name, pat in self.filetypes}
@@ -252,7 +262,7 @@ class CustomFileDialog(ctk.CTkToplevel):
                                                fg_color=COLOR_BTN_NORMAL, button_color=COLOR_BTN_NORMAL, button_hover_color=COLOR_BTN_HOVER)
             self.type_menu.pack(side="left", padx=10)
         
-        action_text = "Save" if mode == "save" else ("Select Folder" if mode == "directory" else "Open")
+        action_text = "Save" if mode == "save" else ("Use This Folder" if mode == "directory" else "Open")
         ctk.CTkButton(bot_frame, text=action_text, command=self.confirm, fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER).pack(side="right")
         ctk.CTkButton(bot_frame, text="Cancel", command=self.destroy, fg_color="transparent", border_width=1, width=80).pack(side="right", padx=10)
 
@@ -303,6 +313,10 @@ class CustomFileDialog(ctk.CTkToplevel):
         self.path_entry.insert(0, self.current_dir)
         
         self.tree.delete(*self.tree.get_children())
+        if self.mode == "directory":
+            self.selected_directory = self.current_dir
+            self.filename_entry.delete(0, "end")
+            self.filename_entry.insert(0, self.current_dir)
         
         try:
             entries = os.scandir(self.current_dir)
@@ -378,13 +392,22 @@ class CustomFileDialog(ctk.CTkToplevel):
         sel = self.tree.selection()
         if not sel: return
         tags = self.tree.item(sel[0], "tags")
-        if "file" in tags:
+        if self.mode == "directory" and "dir" in tags:
+            self.selected_directory = tags[1]
+            self.filename_entry.delete(0, "end")
+            self.filename_entry.insert(0, tags[1])
+        elif "file" in tags:
             self.filename_entry.delete(0, "end")
             self.filename_entry.insert(0, os.path.basename(tags[1]))
 
     def confirm(self):
         if self.mode == "directory":
-            self.result = self.current_dir
+            candidate = self.filename_entry.get().strip()
+            if candidate and not os.path.isabs(candidate):
+                candidate = os.path.join(self.current_dir, candidate)
+            candidate = os.path.abspath(candidate) if candidate else self.selected_directory
+            if candidate and os.path.isdir(candidate):
+                self.result = candidate
         elif self.mode == "save":
             name = self.filename_entry.get()
             if name:
@@ -627,6 +650,9 @@ class TextEditorWindow(ctk.CTkToplevel):
         self.parent_app = parent
         self.modifications_dict = modifications_dict
         self.container = container
+        self.platform = getattr(container, "platform", "PS4")
+        self.final_null = file_data.endswith(b"\0")
+        self.original_size = len(file_data)
         
         self.last_search_query = None
         self.last_search_regex = None
@@ -649,6 +675,16 @@ class TextEditorWindow(ctk.CTkToplevel):
         
         ctk.CTkButton(btn_frame_left, text="Save", command=self.save_memory, width=120,
                       fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER).pack(side="left", padx=5)
+
+        if self.platform == "PS5" and self.entry.name == "MSGS_TXT":
+            ctk.CTkButton(
+                btn_frame_left,
+                text="Balance Size",
+                command=self.balance_selected_text,
+                width=120,
+                fg_color=COLOR_BTN_NORMAL,
+                hover_color=COLOR_BTN_HOVER,
+            ).pack(side="left", padx=5)
 
         self.btn_repack = ctk.CTkButton(self.toolbar, text="Inject to File", command=self.save_sequence,
                       fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
@@ -694,7 +730,8 @@ class TextEditorWindow(ctk.CTkToplevel):
         self.textbox._textbox.tag_config("search_highlight", background=COLOR_ACCENT, foreground="white")
         
         try:
-            text_content = file_data.decode("utf-8", errors="ignore")
+            display_data = file_data[:-1] if self.final_null else file_data
+            text_content = display_data.decode("utf-8", errors="ignore")
             text_content = text_content.replace("\r\n", "\n").replace("\r", "\n")
             self.textbox.insert("1.0", text_content)
         except Exception as e:
@@ -807,7 +844,7 @@ class TextEditorWindow(ctk.CTkToplevel):
         else:
             self.bell()
 
-    def calculate_header(self):
+    def calculate_2018_header(self):
         content = self.textbox.get("1.0", "end-1c").replace("\r", "")
         lines = content.splitlines()
         asterisk_pattern = r'\*(\d+)\*'
@@ -822,7 +859,8 @@ class TextEditorWindow(ctk.CTkToplevel):
         d_tag_count = 0
 
         for i, line in enumerate(lines):
-            if "[[D:" in line: d_tag_count += 1
+            if "[[D:" in line:
+                d_tag_count += 1
             match = re.search(asterisk_pattern, line)
             if match:
                 found_ids.append(int(match.group(1)))
@@ -835,9 +873,10 @@ class TextEditorWindow(ctk.CTkToplevel):
                         total_type2_lines += current_line_count
                 current_line_count = 0
                 counting = True
-                current_type = 2 if (i + 1 < len(lines) and "[[S:" in lines[i+1]) else 1
+                current_type = 2 if i + 1 < len(lines) and "[[S:" in lines[i + 1] else 1
                 continue
-            if counting and "[[S:" not in line: current_line_count += 1
+            if counting and "[[S:" not in line:
+                current_line_count += 1
 
         if counting:
             if current_type == 1:
@@ -847,32 +886,203 @@ class TextEditorWindow(ctk.CTkToplevel):
                 type2_counter[current_line_count] += 1
                 total_type2_lines += current_line_count
 
+        total_occurrences = sum(type1_counter.values()) + sum(type2_counter.values())
+        maximum_id = max(found_ids) if found_ids else 0
+        header = (
+            f"{total_occurrences} {(maximum_id - 100000) + 1} "
+            f"{d_tag_count} {(total_type1_lines + total_type2_lines) - d_tag_count}"
+        )
+        self.textbox.delete("1.0", "2.0")
+        self.textbox.insert("1.0", header + "\n")
+        return header
+
+    def calculate_header(self):
+        if self.platform == "PS4":
+            return self.calculate_2018_header()
+
+        content = self.textbox.get("1.0", "end-1c").replace("\r", "")
+        lines = content.split("\n")
+        
+        # --- Cutoff point logic ---
+        last_s_index = -1
+        for i, line in enumerate(lines):
+            if "[[S:" in line: last_s_index = i
+            
+        cutoff_index = len(lines)
+        if last_s_index != -1:
+            for i in range(last_s_index + 1, len(lines)):
+                if lines[i].strip() == "=":
+                    cutoff_index = i
+                    break
+        # --------------------------
+
+        asterisk_pattern = r'\*(\d+)\*'
+        type1_counter = Counter()
+        type2_counter = Counter()
+        
+        total_type1_lines = 0
+        total_type2_lines = 0
+        current_line_count = 0
+        current_type = None
+        counting = False
+        d_tag_count = 0
+        
+        # Variables for Number 2 and Number 4
+        number_2 = 0
+        counting_number_2 = False
+
+        for i, line in enumerate(lines):
+            # Only process if we haven't reached the cutoff
+            if i < cutoff_index:
+                if "[[D:" in line: d_tag_count += 1
+                
+                match = re.search(asterisk_pattern, line)
+                if match:
+                    # Start counting for Number 2 when ID is 100000
+                    if int(match.group(1)) == 100000:
+                        counting_number_2 = True
+                    
+                    if counting:
+                        if current_type == 1:
+                            type1_counter[current_line_count] += 1
+                            total_type1_lines += current_line_count
+                        else:
+                            type2_counter[current_line_count] += 1
+                            total_type2_lines += current_line_count
+                            
+                    current_line_count = 0
+                    counting = True
+                    current_type = 2 if (i + 1 < len(lines) and "[[S:" in lines[i+1]) else 1
+                    continue
+                    
+                if counting and "[[S:" not in line:
+                    current_line_count += 1
+                    # Increment Number 2 if we are inside the active range
+                    if counting_number_2:
+                        number_2 += 1
+
+        # Finish counting the final block
+        if counting:
+            if current_type == 1:
+                type1_counter[current_line_count] += 1
+                total_type1_lines += current_line_count
+            else:
+                type2_counter[current_line_count] += 1
+                total_type2_lines += current_line_count
+
         total_occur_sum = sum(type1_counter.values()) + sum(type2_counter.values())
-        max_id = max(found_ids) if found_ids else 0
-        new_header = f"{total_occur_sum} {(max_id - 100000) + 1} {d_tag_count} {(total_type1_lines + total_type2_lines) - d_tag_count}"
+        
+        # Number 4: total lines minus tags
+        number_4 = (total_type1_lines + total_type2_lines) - d_tag_count
+        
+        for i in range(cutoff_index, len(lines) - 1):
+            if lines[i].strip() == "=" and lines[i + 1].strip().isdigit():
+                number_2 += 1
+        if lines and lines[-1] == "":
+            number_2 += 1
+        if self.final_null:
+            number_2 += 1
+
+        new_header = f"{total_occur_sum} {number_2} {d_tag_count} {number_4}"
+        
         self.textbox.delete("1.0", "2.0")
         self.textbox.insert("1.0", new_header + "\n")
         return new_header
 
+    def _current_payload(self):
+        content = self.textbox.get("1.0", "end-1c")
+        if self.entry.name == "MSGS_TXT":
+            content = content.replace("\r\n", "\n").replace("\r", "\n")
+        payload = content.encode("utf-8")
+        if self.final_null:
+            payload += b"\0"
+        return payload
+
+    def balance_selected_text(self):
+        self.calculate_header()
+        payload_delta = len(self._current_payload()) - self.original_size
+        if payload_delta == 0:
+            self.lbl_status.configure(text="Size already matches", text_color="#2ECC71")
+            return
+
+        widget = self.textbox._textbox
+        try:
+            start = widget.index("sel.first")
+            end = widget.index("sel.last")
+            selected = widget.get(start, end)
+        except Exception:
+            CustomMessageBox(
+                "Select balancing text",
+                "Select text from one ordinary translation line that may be shortened or padded.",
+                is_error=True,
+            )
+            return
+
+        if not selected or "\n" in selected or "\r" in selected:
+            CustomMessageBox(
+                "Invalid selection",
+                "The balancing selection must stay inside one text line.",
+                is_error=True,
+            )
+            return
+
+        if payload_delta > 0:
+            removed_bytes = 0
+            cut = len(selected)
+            while cut > 0 and removed_bytes < payload_delta:
+                cut -= 1
+                removed_bytes += len(selected[cut].encode("utf-8"))
+            if removed_bytes != payload_delta:
+                CustomMessageBox(
+                    "Selection is too small",
+                    f"The selection must provide exactly {payload_delta} UTF-8 bytes.",
+                    is_error=True,
+                )
+                return
+            replacement = selected[:cut]
+        else:
+            replacement = selected + (" " * -payload_delta)
+
+        widget.delete(start, end)
+        widget.insert(start, replacement)
+        if len(self._current_payload()) != self.original_size:
+            CustomMessageBox(
+                "Balance failed",
+                "The edited MSGS_TXT still does not match its original byte size.",
+                is_error=True,
+            )
+            return
+        self.lbl_status.configure(
+            text=f"Balanced to {self.original_size:,} bytes", text_color="#2ECC71"
+        )
+
     def save_memory(self):
         if self.entry.name == "MSGS_TXT":
-            new_hdr = self.calculate_header()
-            self.lbl_status.configure(text=f"Auto-Calc: {new_hdr}", text_color="#2ECC71")
-        
+            self.calculate_header()
         content = self.textbox.get("1.0", "end-1c")
         
         if self.entry.name == "MSGS_TXT":
             content = content.replace("\r\n", "\n").replace("\r", "\n")
 
         try:
-            self.modifications_dict[self.entry.name] = content.encode("utf-8")
-            self.lbl_status.configure(text="Saved to Memory (with Auto-Header)", text_color="#3498DB")
+            encoded = content.encode("utf-8")
+            if self.final_null:
+                encoded += b"\0"
+            self.modifications_dict[self.entry.name] = encoded
+            delta = len(encoded) - self.original_size
+            size_note = "" if delta == 0 else f" ({delta:+,} bytes)"
+            self.lbl_status.configure(
+                text=f"Saved to Memory{size_note}", text_color="#3498DB"
+            )
             self.after(3000, lambda: self.lbl_status.configure(text=""))
+            return True
         except Exception as e:
             CustomMessageBox("Save Error", str(e), is_error=True)
+            return False
 
     def save_sequence(self):
-        self.save_memory()
+        if not self.save_memory():
+            return
         dialog = CustomFileDialog(self, title="Save Repacked WAD", mode="save", 
                                   filetypes=[("WAD Files", "*.wad")], 
                                   initial_file=os.path.basename(self.wad_path))
@@ -897,7 +1107,11 @@ class TextEditorWindow(ctk.CTkToplevel):
                 except Exception as e:
                     print(f"Backup failed: {e}")
 
-            true_idx = self.parent_app.scan_for_true_index(self.wad_path, self.entry.offset)
+            true_idx = getattr(self.entry, "archive_index", None)
+            if true_idx is None:
+                true_idx = self.parent_app.scan_for_true_index(
+                    self.wad_path, self.entry.offset
+                )
             
             if true_idx == -1:
                 raise Exception("Could not find true file index in WAD structure.")
@@ -907,8 +1121,11 @@ class TextEditorWindow(ctk.CTkToplevel):
             target_filename = f"{safe_name}.{true_idx}.bin"
             target_path = os.path.join(temp_dir, target_filename)
             
-            with open(target_path, 'w', encoding='utf-8', newline='\n') as f:
-                f.write(new_text_content)
+            payload = new_text_content.encode("utf-8")
+            if self.final_null:
+                payload += b"\0"
+            with open(target_path, 'wb') as f:
+                f.write(payload)
                 
             success = UnifiedController.repack_wad(self.wad_path, temp_dir, save_path, None)
             
@@ -981,6 +1198,9 @@ def _shared_app_init(cls):
         self.filtered_entries = []
         self.total_pages = 1
         self.items_per_page = 50
+        self._last_file_search_query = ""
+        self._file_search_after_id = None
+        self.file_tree_entries = {}
         
         self.status_msg = ctk.StringVar(value="Ready.")
         self.grid_columnconfigure(1, weight=1)
@@ -1092,7 +1312,7 @@ def _shared_app_init(cls):
         self.title_bar = ctk.CTkFrame(self, height=30, fg_color=COLOR_TITLE_BAR, corner_radius=0)
         self.title_bar.grid(row=0, column=0, columnspan=2, sticky="ew")
         
-        title_lbl = ctk.CTkLabel(self.title_bar, text="God of War (2018) Asset Tool", font=("Roboto", 13, "bold"), text_color="#ccc")
+        title_lbl = ctk.CTkLabel(self.title_bar, text="God of War PS4 / PS5 Asset Tool", font=("Roboto", 13, "bold"), text_color="#ccc")
         title_lbl.pack(side="left", padx=10)
         
         title_lbl.bind("<Button-1>", self.start_move)
@@ -1186,12 +1406,12 @@ def _shared_app_init(cls):
     def create_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, width=250, corner_radius=0, fg_color=COLOR_SIDEBAR)
         self.sidebar.grid(row=1, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(12, weight=1)
+        self.sidebar.grid_rowconfigure(13, weight=1)
 
         title_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         title_frame.grid(row=0, column=0, padx=20, pady=(30, 20), sticky="ew")
         ctk.CTkLabel(title_frame, text="GOW TOOL", font=(APP_FONT_FAMILY, 26, "bold"), text_color="white").pack(anchor="w")
-        ctk.CTkLabel(title_frame, text="2018 EDITION", font=("Roboto", 10, "bold"), text_color="gray").pack(anchor="w")
+        ctk.CTkLabel(title_frame, text="PS4 / PS5 EDITION", font=("Roboto", 10, "bold"), text_color="gray").pack(anchor="w")
 
         ctk.CTkFrame(self.sidebar, height=2, fg_color="#333333").grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 20))
 
@@ -1213,16 +1433,25 @@ def _shared_app_init(cls):
         self.btn_extract_all = self.create_nav_button(self.sidebar, "⬇  Extract Current", self.extract_current_action, 6, state="disabled")
         self.btn_batch_extract = self.create_nav_button(self.sidebar, "📚  Batch Extract All", self.batch_extract_action, 7, state="disabled")
 
-        ctk.CTkLabel(self.sidebar, text="MODDING", font=("Roboto", 10, "bold"), text_color="#666666").grid(row=8, column=0, padx=25, pady=(20, 5), sticky="w")
+        self.texture_output_var = ctk.StringVar(value="Raw")
+        self.texture_output = ctk.CTkSegmentedButton(
+            self.sidebar,
+            values=["Raw", "GNF", "DDS", "PNG"],
+            variable=self.texture_output_var,
+            font=("Roboto", 11),
+        )
+        self.texture_output.grid(row=8, column=0, padx=15, pady=(0, 12), sticky="ew")
+
+        ctk.CTkLabel(self.sidebar, text="MODDING", font=("Roboto", 10, "bold"), text_color="#666666").grid(row=9, column=0, padx=25, pady=(10, 5), sticky="w")
         
-        self.btn_repack = self.create_nav_button(self.sidebar, "📦  Repack Folder", self.repack_action, 9, fg=COLOR_ACCENT, hover=COLOR_ACCENT_HOVER)
+        self.btn_repack = self.create_nav_button(self.sidebar, "📦  Repack Folder", self.repack_action, 10, fg=COLOR_ACCENT, hover=COLOR_ACCENT_HOVER)
         
-        self.btn_repack_current = self.create_nav_button(self.sidebar, "💾  Repack Current", self.repack_current_action, 10, state="disabled", fg=COLOR_ACCENT, hover=COLOR_ACCENT_HOVER)
+        self.btn_repack_current = self.create_nav_button(self.sidebar, "💾  Repack Current", self.repack_current_action, 11, state="disabled", fg=COLOR_ACCENT, hover=COLOR_ACCENT_HOVER)
         
         self.chk_backup_var = ctk.BooleanVar(value=True)
         self.chk_backup = ctk.CTkCheckBox(self.sidebar, text="Backup Original (.bak)", variable=self.chk_backup_var, 
                                           font=("Roboto", 11), text_color="#ccc", checkmark_color="white", fg_color=COLOR_ACCENT)
-        self.chk_backup.grid(row=11, column=0, padx=25, pady=10, sticky="nw")
+        self.chk_backup.grid(row=12, column=0, padx=25, pady=(8, 4), sticky="w")
 
         self.lbl_sys_status = ctk.CTkLabel(self.sidebar, text="Checking...", font=("Roboto", 11), justify="left")
         self.lbl_sys_status.grid(row=13, column=0, padx=20, pady=(10, 0), sticky="sw")
@@ -1306,9 +1535,77 @@ def _shared_app_init(cls):
         self.btn_batch_replace.pack(side="right", padx=5)
         # -------------------------
 
-        self.file_list = ctk.CTkScrollableFrame(self.main_frame, label_text="  File Contents  ", label_font=("Roboto", 12, "bold"))
-        self.file_list.grid(row=4, column=0, sticky="nsew", padx=20, pady=(10, 0)) # Less padding bottom
-        self.file_list.grid_columnconfigure(0, weight=1) 
+        self.file_list = ctk.CTkFrame(self.main_frame, corner_radius=6, fg_color="#202020")
+        self.file_list.grid(row=4, column=0, sticky="nsew", padx=20, pady=(10, 0))
+        self.file_list.grid_rowconfigure(1, weight=1)
+        self.file_list.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            self.file_list,
+            text="File Contents",
+            height=30,
+            anchor="w",
+            font=("Roboto", 12, "bold"),
+            text_color="#d0d0d0",
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=12)
+
+        list_style = ttk.Style()
+        # Native Windows themes ignore Treeview background colors. The file
+        # dialog used to switch this globally only after it was opened.
+        if list_style.theme_use() != "clam":
+            list_style.theme_use("clam")
+        list_style.configure(
+            "FileList.Treeview",
+            background="#252525",
+            fieldbackground="#252525",
+            foreground="#eeeeee",
+            borderwidth=0,
+            relief="flat",
+            rowheight=28,
+            font=("Roboto Mono", 10),
+        )
+        list_style.map(
+            "FileList.Treeview",
+            background=[("selected", COLOR_ACCENT)],
+            foreground=[("selected", "white")],
+        )
+        list_style.configure(
+            "FileList.Treeview.Heading",
+            background="#181818",
+            foreground="#cccccc",
+            borderwidth=0,
+            relief="flat",
+            font=("Roboto", 10, "bold"),
+        )
+        list_style.map(
+            "FileList.Treeview.Heading",
+            background=[("active", "#303030")],
+            foreground=[("active", "white")],
+        )
+        self.file_tree = ttk.Treeview(
+            self.file_list,
+            columns=("type", "origin", "size"),
+            show="tree headings",
+            selectmode="extended",
+            style="FileList.Treeview",
+        )
+        self.file_tree.heading("#0", text="Name", anchor="w")
+        self.file_tree.heading("type", text="Type", anchor="w")
+        self.file_tree.heading("origin", text="Origin TEXPACK", anchor="w")
+        self.file_tree.heading("size", text="Size", anchor="e")
+        self.file_tree.column("#0", width=430, minwidth=200, stretch=True)
+        self.file_tree.column("type", width=105, minwidth=80, stretch=False)
+        self.file_tree.column("origin", width=230, minwidth=130, stretch=True)
+        self.file_tree.column("size", width=120, minwidth=90, stretch=False, anchor="e")
+        self.file_tree.tag_configure("even", background="#252525")
+        self.file_tree.tag_configure("odd", background="#202020")
+        self.file_tree.grid(row=1, column=0, sticky="nsew")
+        file_scrollbar = ctk.CTkScrollbar(
+            self.file_list, orientation="vertical", command=self.file_tree.yview
+        )
+        file_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.file_tree.configure(yscrollcommand=file_scrollbar.set)
+        self.file_tree.bind("<Button-3>", self.on_file_tree_context)
+        self.file_tree.bind("<Double-1>", self.on_file_tree_activate)
 
         # --- PAGINATION CONTROLS (NEW) ---
         self.pagination_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent", height=30)
@@ -1439,7 +1736,10 @@ def _shared_app_init(cls):
     def show_context_menu(self, event, entry):
         self.selected_entry_for_context = entry
         
-        options = [
+        options = []
+        if entry.get_extension() in (".wem", ".ogg"):
+            options.extend([("Play Audio", lambda: self.play_audio(entry)), "-"])
+        options.extend([
             ("Open Text Editor", lambda: self.open_text_editor(self.selected_entry_for_context)),
             ("Open Hex Viewer", lambda: self.open_hex_viewer(self.selected_entry_for_context)),
             "-",
@@ -1447,7 +1747,7 @@ def _shared_app_init(cls):
             ("Extract File", self.extract_file_context),
             "-",
             ("Copy Name", self.copy_name_context)
-        ]
+        ])
         
         FloatingMenu(self, event.x_root, event.y_root, options)
 
@@ -1636,9 +1936,14 @@ def _shared_app_init(cls):
     def replace_file_context(self):
         if not self.selected_entry_for_context: return
         entry = self.selected_entry_for_context
-        
+        container_type = self.open_containers[self.active_idx]['type']
+        replacement_types = (
+            [("Texture Files", "*.gnf *.dds *.png"), ("All Files", "*.*")]
+            if container_type == "TEXPACK"
+            else [("All Files", "*.*"), ("Audio Files", "*.wem *.wav *.mp3 *.ogg")]
+        )
         dialog = CustomFileDialog(self, title=f"Replace {entry.name}", mode="open", 
-                                  filetypes=[("All Files", "*.*"), ("Audio Files", "*.wem *.wav *.mp3 *.ogg")])
+                                  filetypes=replacement_types)
         if dialog.result:
             file_path = dialog.result
             ext = os.path.splitext(file_path)[1].lower()
@@ -1662,6 +1967,14 @@ def _shared_app_init(cls):
                     except: pass
                 else:
                     return # Cancel if conversion failed/cancelled
+            elif container_type == "TEXPACK":
+                try:
+                    final_data = UnifiedController.prepare_texture_replacement(
+                        self.open_containers[self.active_idx]['path'], entry, file_path
+                    )
+                except Exception as e:
+                    CustomMessageBox("Invalid Texture", str(e), is_error=True)
+                    return
             else:
                 try:
                     with open(file_path, 'rb') as f:
@@ -1671,11 +1984,16 @@ def _shared_app_init(cls):
                      return
 
             if final_data:
+                c_type = container_type
                 self.open_containers[self.active_idx]['modifications'][entry.name] = final_data
-                
+
                 # Check for SBP constraint warning
-                c_type = self.open_containers[self.active_idx]['type']
                 msg = f"Replaced '{entry.name}' in memory.\nDon't forget to Repack."
+                if c_type == "TEXPACK" and ext in (".png", ".dds"):
+                    msg += (
+                        "\n\nThe texture was converted using the original dimensions, format, "
+                        "mip count, swizzle, metadata, alignment, and exact payload size."
+                    )
                 
                 if c_type in ["SBP", "BNK"]:
                     if len(final_data) > entry.size:
@@ -1697,8 +2015,8 @@ def _shared_app_init(cls):
             self.update()
 
     def on_load_click(self):
-        dialog = CustomFileDialog(self, title="Select WAD, SBP or Texpack Files", mode="open_multiple", 
-                                  filetypes=[("GOW Files", "*.wad *.sbp *.bnk *.texpack"), ("All Files", "*.*")])
+        dialog = CustomFileDialog(self, title="Select God of War Files", mode="open_multiple",
+                                  filetypes=[("God of War Files", "*.wad *.texpack *.sbp *.bnk"), ("All Files", "*.*")])
         if not dialog.result: return
         paths = dialog.result
         self.status_msg.set(f"Loading {len(paths)} files...")
@@ -1727,6 +2045,8 @@ def _shared_app_init(cls):
         container = UnifiedController.get_container(path, file_type)
         success = False
         if container: success = container.read()
+        if success and file_type == "WAD":
+            UnifiedController.resolve_wad_texture_origins(path, container.entries)
         self.after(0, lambda: self.add_container_result(container, success, file_type, path))
 
     def add_container_result(self, container, success, file_type, path):
@@ -1734,21 +2054,22 @@ def _shared_app_init(cls):
             self.after(0, lambda: CustomMessageBox("Error", f"Failed to read {os.path.basename(path)}", is_error=True))
             return
 
-        if isinstance(container, Gow2018_Wad):
+        if file_type == "WAD":
             UnifiedController.prepare_unique_names(container)
 
         self.save_recent_files(path)
         self.open_containers.append({'container': container, 'path': path, 'type': file_type, 'modifications': {}})
         self.btn_extract_all.configure(state="normal")
         self.btn_batch_extract.configure(state="normal")
-        self.btn_repack_current.configure(state="normal")
+        self.btn_repack_current.configure(state="normal" if file_type in ["WAD", "TEXPACK", "SBP", "BNK"] else "disabled")
         
         self.rebuild_tab_bar()
         self.switch_to_tab(len(self.open_containers) - 1)
-        self.status_msg.set(f"Loaded {os.path.basename(path)}")
+        self.status_msg.set(f"Loaded {os.path.basename(path)} ({getattr(container, 'platform', 'PS4')})")
 
     def close_tab(self, idx_to_close):
         if idx_to_close < 0 or idx_to_close >= len(self.open_containers): return
+        closing_active = idx_to_close == self.active_idx
         
         # STOP AUDIO before closing
         if self.audio_player.is_playing:
@@ -1771,7 +2092,7 @@ def _shared_app_init(cls):
             self.btn_repack_current.configure(state="disabled")
             
             # Reset Scrollbar
-            self.file_list._parent_canvas.yview_moveto(0)
+            self.file_tree.yview_moveto(0)
         else:
             if idx_to_close == self.active_idx:
                 self.active_idx = max(0, idx_to_close - 1)
@@ -1780,7 +2101,10 @@ def _shared_app_init(cls):
         
         self.rebuild_tab_bar()
         if self.active_idx != -1:
-            self.switch_to_tab(self.active_idx)
+            if closing_active:
+                self.switch_to_tab(self.active_idx, force=True)
+            else:
+                self.update_tab_colors()
 
     def rebuild_tab_bar(self):
         for w in self.tab_scroll.winfo_children():
@@ -1790,11 +2114,23 @@ def _shared_app_init(cls):
             color = COLOR_ACCENT if i == self.active_idx else COLOR_BTN_NORMAL
             fr = ctk.CTkFrame(self.tab_scroll, fg_color=color, corner_radius=6)
             fr.pack(side="left", padx=4, pady=5)
+            self.tab_widgets.append(fr)
             ctk.CTkButton(fr, text=os.path.basename(data['path']), fg_color="transparent", hover_color=color, width=120, anchor="w", command=lambda idx=i: self.switch_to_tab(idx)).pack(side="left", padx=(5, 0), pady=2)
             ctk.CTkButton(fr, text="✕", width=24, height=24, fg_color="transparent", hover_color=COLOR_RED, text_color="#ffcccc", command=lambda idx=i: self.close_tab(idx)).pack(side="right", padx=(0, 2), pady=2)
 
-    def switch_to_tab(self, idx):
+    def update_tab_colors(self):
+        for index, frame in enumerate(self.tab_widgets):
+            color = COLOR_ACCENT if index == self.active_idx else COLOR_BTN_NORMAL
+            try:
+                frame.configure(fg_color=color)
+                frame.winfo_children()[0].configure(hover_color=color)
+            except Exception:
+                pass
+
+    def switch_to_tab(self, idx, force=False):
         if idx < 0 or idx >= len(self.open_containers): return
+        if idx == self.active_idx and not force:
+            return
         
         # STOP AUDIO when switching tabs (optional but good for cleanup)
         if self.audio_player.is_playing:
@@ -1802,8 +2138,9 @@ def _shared_app_init(cls):
             
         self.active_idx = idx
         data = self.open_containers[idx]
-        self.rebuild_tab_bar()
+        self.update_tab_colors()
         self.entry_file_search.delete(0, "end")
+        self._last_file_search_query = ""
         self.current_entries = list(data['container'].entries)
         
         # Sort WEM files by ID if SBP
@@ -1818,7 +2155,7 @@ def _shared_app_init(cls):
         self.page_index = 0
         
         # Reset Scrollbar Position to top
-        self.file_list._parent_canvas.yview_moveto(0)
+        self.file_tree.yview_moveto(0)
         
         self.apply_filters()
 
@@ -1981,7 +2318,12 @@ def _shared_app_init(cls):
             CustomMessageBox("Error", f"Could not play audio: {e}", is_error=True)
 
     def apply_filters(self):
-        if not self.current_entries: return
+        if not self.current_entries:
+            self.filtered_entries = []
+            self.total_pages = 1
+            self.page_index = 0
+            self.update_file_list_view()
+            return
         query = self.entry_file_search.get().lower()
         
         filtered = []
@@ -1989,7 +2331,18 @@ def _shared_app_init(cls):
             if query and query not in e.name.lower(): continue
             ext = e.get_extension()
             is_txt = e.name == "MSGS_TXT"
-            is_tex = ext == ".texpack" or ext == ".dds" or e.type_id == 0x80A1
+            is_tex = (
+                (
+                    getattr(e, "is_texture_reference", False)
+                    and getattr(e, "texture_resolved", False)
+                )
+                or ext == ".texpack"
+                or ext == ".dds"
+                or (
+                    e.type_id in (0x80A1, 0x80A2)
+                    and not getattr(e, "is_texture_reference", False)
+                )
+            )
             is_wem = ext == ".wem" or ext == ".ogg"
             
             # "Binary/Other" is everything else
@@ -2013,21 +2366,36 @@ def _shared_app_init(cls):
         self.update_file_list_view()
 
     def on_file_search(self, event=None):
+        query = self.entry_file_search.get().lower()
+        if query == self._last_file_search_query:
+            return
+        self._last_file_search_query = query
+        if self._file_search_after_id is not None:
+            try:
+                self.after_cancel(self._file_search_after_id)
+            except Exception:
+                pass
+        self._file_search_after_id = self.after(180, self._apply_debounced_file_search)
+
+    def _apply_debounced_file_search(self):
+        self._file_search_after_id = None
+        self.page_index = 0
         self.apply_filters()
 
     def select_all_files(self):
-        if not hasattr(self, 'file_selection_vars'): return
-        for _, var in self.file_selection_vars.values():
-            var.set(True)
+        children = self.file_tree.get_children()
+        if children:
+            self.file_tree.selection_set(children)
 
     def deselect_all_files(self):
-        if not hasattr(self, 'file_selection_vars'): return
-        for _, var in self.file_selection_vars.values():
-            var.set(False)
+        self.file_tree.selection_remove(self.file_tree.selection())
 
     def batch_replace_selected(self):
-        if not hasattr(self, 'file_selection_vars'): return
-        selected_entries = [entry for entry, var in self.file_selection_vars.values() if var.get()]
+        selected_entries = [
+            self.file_tree_entries[item]
+            for item in self.file_tree.selection()
+            if item in self.file_tree_entries
+        ]
         
         if not selected_entries:
             CustomMessageBox("Info", "No files selected.\nCheck the boxes next to files you want to replace.")
@@ -2073,7 +2441,7 @@ def _shared_app_init(cls):
             CustomMessageBox("Success", f"Replaced {replaced_count} files with:\n{os.path.basename(source_path)}")
             self.status_msg.set(f"Batch replaced {replaced_count} files.")
 
-    def update_file_list_view(self):
+    def _legacy_update_file_list_view(self):
         entries = self.filtered_entries
         
         # Limpa widgets anteriores
@@ -2160,16 +2528,82 @@ def _shared_app_init(cls):
                               fg_color="#2ECC71", hover_color="#27AE60", text_color="white", 
                               command=lambda e=entry: self.play_audio(e)).pack(side="left", padx=5)
 
+    def update_file_list_view(self):
+        entries = self.filtered_entries
+        self.file_tree.delete(*self.file_tree.get_children())
+        self.file_tree_entries = {}
+
+        if not entries:
+            self.lbl_page_info.configure(text="")
+            self.btn_prev_page.configure(state="disabled")
+            self.btn_next_page.configure(state="disabled")
+            self.file_tree.insert("", "end", text="No matches found.", values=("", "", ""))
+            return
+
+        start_idx = self.page_index * self.items_per_page
+        page_entries = entries[start_idx:start_idx + self.items_per_page]
+        self.lbl_page_info.configure(
+            text=f"Page {self.page_index + 1} / {self.total_pages} ({len(entries)} items)"
+        )
+        self.btn_prev_page.configure(
+            state="normal" if self.page_index > 0 else "disabled"
+        )
+        self.btn_next_page.configure(
+            state="normal" if self.page_index < self.total_pages - 1 else "disabled"
+        )
+
+        for index, entry in enumerate(page_entries):
+            extension = entry.get_extension()
+            is_texture_reference = getattr(entry, "is_texture_reference", False)
+            type_name = (
+                "Texture Ref" if getattr(entry, "texture_resolved", False)
+                else "Missing Texture Ref" if is_texture_reference
+                else extension.lstrip(".").upper() if extension else "FILE"
+            )
+            origin = getattr(entry, "texture_origin", "") if is_texture_reference else ""
+            item = self.file_tree.insert(
+                "",
+                "end",
+                text=entry.name,
+                values=(type_name, origin, f"{entry.size:,} B"),
+                tags=("even" if index % 2 == 0 else "odd",),
+            )
+            self.file_tree_entries[item] = entry
+
+    def on_file_tree_context(self, event):
+        item = self.file_tree.identify_row(event.y)
+        entry = self.file_tree_entries.get(item)
+        if entry is None:
+            return
+        if item not in self.file_tree.selection():
+            self.file_tree.selection_set(item)
+        self.show_context_menu(event, entry)
+
+    def on_file_tree_activate(self, event=None):
+        selection = self.file_tree.selection()
+        if not selection:
+            return
+        entry = self.file_tree_entries.get(selection[0])
+        if entry is None:
+            return
+        extension = entry.get_extension()
+        if entry.name == "MSGS_TXT":
+            self.open_text_editor(entry)
+        elif extension in (".wem", ".ogg"):
+            self.play_audio(entry)
+        else:
+            self.extract_single(entry)
+
     def next_page(self):
         if self.page_index < self.total_pages - 1:
             self.page_index += 1
-            self.file_list._parent_canvas.yview_moveto(0) # SCROLL RESET HERE
+            self.file_tree.yview_moveto(0)
             self.update_file_list_view()
 
     def prev_page(self):
         if self.page_index > 0:
             self.page_index -= 1
-            self.file_list._parent_canvas.yview_moveto(0) # SCROLL RESET HERE
+            self.file_tree.yview_moveto(0)
             self.update_file_list_view()
 
     def _get_entry_data(self, entry):
@@ -2202,7 +2636,8 @@ def _shared_app_init(cls):
         self.lbl_page_info.configure(text="") # Clear pagination text
         self.btn_prev_page.configure(state="disabled")
         self.btn_next_page.configure(state="disabled")
-        for w in self.file_list.winfo_children(): w.destroy()
+        self.file_tree.delete(*self.file_tree.get_children())
+        self.file_tree_entries = {}
         self.rebuild_tab_bar()
 
     def format_size(self, size):
@@ -2212,6 +2647,13 @@ def _shared_app_init(cls):
         return f"{size:.2f} TB"
 
     def scan_for_true_index(self, wad_path, target_data_offset):
+        try:
+            with open(wad_path, "rb") as f:
+                if f.read(4) == b"\x04\x22\x4d\x18":
+                    return int(target_data_offset)
+        except:
+            pass
+
         idx = 0
         try:
             with open(wad_path, 'rb') as f:
@@ -2245,7 +2687,13 @@ def _shared_app_init(cls):
 
             # If no data (e.g. Texpack), use backend extractor directly
             if data is None:
-                return UnifiedController.extract_file(container_data['path'], entry, out_dir)
+                return UnifiedController.extract_file(
+                    container_data['path'],
+                    entry,
+                    out_dir,
+                    dds=self.texture_output_var.get() == "DDS",
+                    png=self.texture_output_var.get() == "PNG",
+                )
 
             # 2. Determine Safe Name
             safe_name = "".join([c for c in entry.name if c.isalnum() or c in "._- "]).strip()
@@ -2345,17 +2793,30 @@ def _shared_app_init(cls):
         if not dlg_mod.result: return
         mod_folder = dlg_mod.result
 
-        dlg_wad = CustomFileDialog(self, title="2. Select Original WAD File", mode="open", filetypes=[("WAD Files", "*.wad"), ("All Files", "*.*")])
-        if not dlg_wad.result: return
-        orig_wad = dlg_wad.result
+        dlg_archive = CustomFileDialog(
+            self,
+            title="2. Select Original WAD or TEXPACK",
+            mode="open",
+            filetypes=[("God of War Archives", "*.wad *.texpack"), ("All Files", "*.*")],
+        )
+        if not dlg_archive.result: return
+        original_archive = dlg_archive.result
+        extension = os.path.splitext(original_archive)[1].lower()
+        archive_filter = "*.texpack" if extension == ".texpack" else "*.wad"
 
-        dlg_save = CustomFileDialog(self, title="3. Save New WAD As...", mode="save", filetypes=[("WAD Files", "*.wad")], initial_file="new_archive.wad")
+        dlg_save = CustomFileDialog(
+            self,
+            title="3. Save Repacked Archive As...",
+            mode="save",
+            filetypes=[("Archive", archive_filter)],
+            initial_file=os.path.basename(original_archive),
+        )
         if not dlg_save.result: return
         save_path = dlg_save.result
 
         self.disable_buttons()
-        self.status_msg.set("Repacking WAD...")
-        threading.Thread(target=self.run_repack_task, args=(orig_wad, mod_folder, save_path)).start()
+        self.status_msg.set("Repacking archive...")
+        threading.Thread(target=self.run_repack_task, args=(original_archive, mod_folder, save_path)).start()
 
     def repack_current_action(self):
         if self.active_idx == -1: return
@@ -2408,7 +2869,12 @@ def _shared_app_init(cls):
                         if name not in name_to_entry: continue
                         
                         entry = name_to_entry[name]
-                        true_idx = self.scan_for_true_index(container_path, entry.offset)
+                        # Ragnarok entries already retain their descriptor index. Their
+                        # visible offset belongs to the decompressed WAD and cannot be
+                        # resolved by scanning the compressed file on disk.
+                        true_idx = getattr(entry, "archive_index", None)
+                        if true_idx is None:
+                            true_idx = self.scan_for_true_index(container_path, entry.offset)
                         if true_idx == -1: continue
                         
                         clean_name = name.replace('/', '.').replace('\\', '.')
@@ -2422,6 +2888,24 @@ def _shared_app_init(cls):
                         if curr % 20 == 0: self.status_msg.set(f"Repacking: {curr} files processed...")
 
                     success = UnifiedController.repack_wad(container_path, temp_dir, save_path, update_status)
+                finally:
+                    if os.path.exists(temp_dir):
+                        shutil.rmtree(temp_dir)
+
+            elif file_type == "TEXPACK":
+                temp_dir = tempfile.mkdtemp()
+                try:
+                    for name, content in modifications.items():
+                        with open(os.path.join(temp_dir, name + ".gnf"), "wb") as stream:
+                            stream.write(content)
+                    success = UnifiedController.repack_texpack(
+                        container_path,
+                        temp_dir,
+                        save_path,
+                        lambda current, total, name: self.status_msg.set(
+                            f"Repacking texture {current}/{total}"
+                        ),
+                    )
                 finally:
                     if os.path.exists(temp_dir):
                         shutil.rmtree(temp_dir)
@@ -2531,14 +3015,13 @@ def _shared_app_init(cls):
             self.after(0, lambda: CustomMessageBox("Error", f"An error occurred: {e}", is_error=True))
             self.after(0, self.enable_buttons)
 
-    def run_repack_task(self, orig_wad, mod_folder, save_path):
-        # This is strictly for WAD batch repacking from folder
+    def run_repack_task(self, original_archive, mod_folder, save_path):
         if self.chk_backup_var.get():
-            backup_path = orig_wad + ".bak"
+            backup_path = original_archive + ".bak"
             try:
                 if not os.path.exists(backup_path):
                     self.status_msg.set("Creating Backup...")
-                    shutil.copy2(orig_wad, backup_path)
+                    shutil.copy2(original_archive, backup_path)
                 else:
                     print(f"Backup skipped: {backup_path} already exists.")
             except Exception as e:
@@ -2547,10 +3030,17 @@ def _shared_app_init(cls):
         def update_status(curr, total, name):
             if curr % 20 == 0: self.status_msg.set(f"Repacking: {curr} files processed...")
 
-        success = UnifiedController.repack_wad(orig_wad, mod_folder, save_path, update_status)
+        if os.path.splitext(original_archive)[1].lower() == ".texpack":
+            success = UnifiedController.repack_texpack(
+                original_archive, mod_folder, save_path, update_status
+            )
+        else:
+            success = UnifiedController.repack_wad(
+                original_archive, mod_folder, save_path, update_status
+            )
         self.after(0, self.enable_buttons)
         if success:
-            self.after(0, lambda: CustomMessageBox("Success", "WAD Repacked Successfully!"))
+            self.after(0, lambda: CustomMessageBox("Success", "Archive repacked successfully!"))
             self.status_msg.set("Repack Complete.")
         else:
             self.after(0, lambda: CustomMessageBox("Error", "Repack failed. Check console.", is_error=True))
@@ -2568,42 +3058,70 @@ def _shared_app_init(cls):
         self.btn_extract_all.configure(state="normal")
         self.btn_batch_extract.configure(state="normal")
         self.btn_repack.configure(state="normal")
-        self.btn_repack_current.configure(state="normal")
+        self.btn_repack_current.configure(state="normal" if self.active_idx != -1 and self.open_containers[self.active_idx]['type'] in ["WAD", "TEXPACK", "SBP", "BNK"] else "disabled")
 
     def run_extraction_task(self, base_out_dir, container_list):
-        total_files = len(container_list)
-        for idx, data in enumerate(container_list):
-            container = data['container']
-            path = data['path']
-            filename = os.path.basename(path) 
-            modifications = data.get('modifications', {})
-            self.status_msg.set(f"Extracting {filename} ({idx+1}/{total_files})...")
+        try:
+            total_files = len(container_list)
+            for idx, data in enumerate(container_list):
+                container = data['container']
+                path = data['path']
+                filename = os.path.basename(path) 
+                modifications = data.get('modifications', {})
+                self.status_msg.set(f"Extracting {filename} ({idx+1}/{total_files})...")
             
-            folder_name = os.path.splitext(filename)[0]
-            final_out_dir = os.path.join(base_out_dir, folder_name)
-            if not os.path.exists(final_out_dir): os.makedirs(final_out_dir)
-            
-            for i, entry in enumerate(container.entries):
-                if entry.name in modifications:
-                    try:
-                        safe_name = "".join([c for c in entry.name if c.isalnum() or c in "._- "]).strip()
-                        if not safe_name: safe_name = f"file_{entry.offset}"
-                        ext = entry.get_extension()
-                        if "." not in safe_name and ext: safe_name += ext
-                        
-                        with open(os.path.join(final_out_dir, safe_name), 'wb') as f:
-                            f.write(modifications[entry.name])
-                    except: pass
-                else:
-                    # Use helper for WAV conversion
-                    self._extract_entry_with_conversion(data, entry, final_out_dir)
-                
-                if i % 50 == 0:
-                    self.status_msg.set(f"Extracting {filename}: {i}/{len(container.entries)}")
+                folder_name = os.path.splitext(filename)[0]
+                final_out_dir = os.path.join(base_out_dir, folder_name)
+                if not os.path.exists(final_out_dir): os.makedirs(final_out_dir)
 
-        self.status_msg.set("Extraction Complete.")
-        self.after(0, self.enable_buttons)
-        self.after(0, lambda: CustomMessageBox("Done", "Batch operation completed."))
+                texture_mode = self.texture_output_var.get()
+                if (
+                    getattr(container, "platform", "PS4") == "PS5"
+                    and data["type"] == "WAD"
+                    and texture_mode in ("GNF", "DDS", "PNG")
+                ):
+                    if not UnifiedController.extract_wad_textures(
+                        path,
+                        final_out_dir,
+                        dds=texture_mode == "DDS",
+                        png=texture_mode == "PNG",
+                        status_callback=lambda current, total, name: self.status_msg.set(
+                            f"Extracting textures: {current}/{total}"
+                        ),
+                    ):
+                        raise RuntimeError(f"No referenced textures were exported from {filename}")
+                    continue
+            
+                for i, entry in enumerate(container.entries):
+                    if entry.name in modifications:
+                        try:
+                            safe_name = "".join([c for c in entry.name if c.isalnum() or c in "._- "]).strip()
+                            if not safe_name: safe_name = f"file_{entry.offset}"
+                            ext = entry.get_extension()
+                            if "." not in safe_name and ext: safe_name += ext
+                        
+                            with open(os.path.join(final_out_dir, safe_name), 'wb') as f:
+                                f.write(modifications[entry.name])
+                        except: pass
+                    else:
+                        # Use helper for WAV conversion
+                        self._extract_entry_with_conversion(data, entry, final_out_dir)
+                
+                    if i % 50 == 0:
+                        self.status_msg.set(f"Extracting {filename}: {i}/{len(container.entries)}")
+
+            self.status_msg.set("Extraction Complete.")
+            self.after(0, self.enable_buttons)
+            self.after(0, lambda: CustomMessageBox("Done", "Batch operation completed."))
+        except Exception as exc:
+            message = str(exc)
+            print(f"Extraction failed: {message}")
+            self.status_msg.set("Extraction Failed.")
+            self.after(0, self.enable_buttons)
+            self.after(
+                0,
+                lambda msg=message: CustomMessageBox("Extraction Error", msg, is_error=True),
+            )
 
     def _shared_app_init(cls):
         return cls
@@ -2633,10 +3151,14 @@ def _shared_app_init(cls):
     cls.add_container_result = add_container_result
     cls.close_tab = close_tab
     cls.rebuild_tab_bar = rebuild_tab_bar
+    cls.update_tab_colors = update_tab_colors
     cls.switch_to_tab = switch_to_tab
     cls.apply_filters = apply_filters
     cls.on_file_search = on_file_search
+    cls._apply_debounced_file_search = _apply_debounced_file_search
     cls.update_file_list_view = update_file_list_view
+    cls.on_file_tree_context = on_file_tree_context
+    cls.on_file_tree_activate = on_file_tree_activate
     cls._get_entry_data = _get_entry_data
     cls.open_text_editor = open_text_editor
     cls.open_hex_viewer = open_hex_viewer

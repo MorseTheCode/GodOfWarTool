@@ -4,7 +4,7 @@ import sys
 import shutil
 
 # --- CONFIGURAÇÕES ---
-APP_NAME = "GodOfWar_AssetTool"
+APP_NAME = "GodOfWarRagnarok_PS5_AssetTool"
 MAIN_SCRIPT = "app.py"
 UPX_DIR = "upx"
 
@@ -56,6 +56,7 @@ for entry in raw_dnd_datas:
     lower_src = source.lower()
     if "arm64" in lower_src or "aarch64" in lower_src: continue
     if "win-x86" in lower_src or "win32" in lower_src: continue
+    if "linux" in lower_src or "mac" in lower_src or "osx" in lower_src: continue
     filtered_datas.append(entry)
 datas += filtered_datas
 
@@ -63,9 +64,12 @@ datas += filtered_datas
 import glob
 project_assets = []
 
-# 1. Fontes e DLL Oodle
+# 1. Fonts and native compression libraries
 if os.path.exists("Berserker.ttf"): project_assets.append(('Berserker.ttf', '.'))
 if os.path.exists("oo2core_7_win64.dll"): project_assets.append(('oo2core_7_win64.dll', '.'))
+if os.path.exists("liblz4.dll"): project_assets.append(('liblz4.dll', '.'))
+if os.path.exists("texconv.exe"): project_assets.append(('texconv.exe', '.'))
+if os.path.exists("texture_codec.dll"): project_assets.append(('texture_codec.dll', '.'))
 
 # 2. Todos os icones
 for ico in glob.glob("*.ico"):
@@ -128,7 +132,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='GodOfWar_AssetTool',
+    name='GodOfWarRagnarok_PS5_AssetTool',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
