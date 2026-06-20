@@ -109,7 +109,7 @@ python built_clean.py
 ```
 
 The build script installs the required Python packages, generates the PyInstaller configuration, bundles available native dependencies, and applies the existing size exclusions.
-For more compression, download [UPX](https://upx.github.io/), place the upx.exe file in the project folder in a folder called "upx", and change the variable upx from False to True in built_clean.py.
+For more a more compressed build, download [UPX](https://upx.github.io/), place the upx.exe file in the project folder in a folder called "upx", and change the variable ```upx``` from ```False``` to ```True``` in built_clean.py before running it.
 
 ### Existing PyInstaller specification
 
