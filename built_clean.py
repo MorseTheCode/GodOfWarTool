@@ -136,7 +136,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     # Protege arquivos sensíveis do UPX
     upx_exclude=['vcruntime140.dll', 'ucrtbase.dll', 'lxml', 'libtkdnd*'],
     runtime_tmpdir=None,
